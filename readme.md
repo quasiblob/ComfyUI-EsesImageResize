@@ -51,7 +51,7 @@ The 'Eses Image Resize' node offers comprehensive image resizing capabilities wi
 
 2.  **Clone this repository:**
     ```
-    git clone https://github.com/quasiblob/EsesImageResize.git
+    git clone https://github.com/quasiblob/ComfyUI-EsesImageResize.git
     ```
 
 3.  **Restart ComfyUI:**
