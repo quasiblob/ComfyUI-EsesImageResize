@@ -1,0 +1,43 @@
+"My ComfyUI Nodes License" (1.0)
+
+This license outlines how you can use my ComfyUI nodes. My goal is to share
+my work for free personal use while ensuring it remains my creative project.
+
+What You Are Free To Do:
+
+• Use Freely: You are welcome to use this node in any of your ComfyUI
+workflows, free of charge and forever. This applies whether you are an
+individual, a company, or any other entity.
+
+• Personal Modifications: You, as an individual user, are permitted to modify 
+the source code solely for your own personal use to better fit your individual 
+workflows. Such modifications may not be distributed or standardized for use 
+by others within an organization.
+
+What Is Not Permitted:
+
+• No Rebranding: You may not modify the source code with the intention of
+rebranding it or releasing it as your own tool.
+
+• No Code Reuse: You may not reuse any part of the source code in other
+projects without my explicit written permission.
+
+• No Bundling: You may not include this node as part of any other software
+package or collection.
+
+• Restricted Distribution: This node should only be distributed from its
+original repository. Please do not host it elsewhere. The original repository 
+like my other repositorys are located at https://github.com/quasiblob/.
+
+Why These Restrictions?
+
+I create these tools primarily for my own use and to showcase my skills as a
+creative individual. These guidelines help maintain the integrity of my work.
+If your specific use case seems unclear or falls into a gray area, please
+feel free to reach out and ask.
+
+DISCLAIMER
+
+THIS PIECE OF SOFTWARE IS PROVIDED "AS IS," WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED. BY USING THIS SOFTWARE, YOU AGREE THAT YOU ARE SOLELY
+RESPONSIBLE FOR ANY OUTCOMES OR ISSUES THAT MAY ARISE. USE AT YOUR OWN RISK.
