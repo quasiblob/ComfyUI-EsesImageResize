@@ -64,7 +64,7 @@
 #   including final dimensions, megapixels, aspect ratio, and framing
 #   strategy.
 #
-# Version: 1.0.2
+# Version: 1.1.0
 # License: See LICENSE.txt
 #
 # ==========================================================================
@@ -380,6 +380,8 @@ class EsesImageResize:
             },
             "optional": {
                 "mask": ("MASK", {"optional": True}), # Optional mask input
+                "ref_image": ("IMAGE", {"optional": True, "tooltip": "If connected, use this image's dimensions as the target width and height."}), # MODIFICATION: Reference Image
+                "ref_mask": ("MASK", {"optional": True, "tooltip": "If connected, use this mask's dimensions as the target. Overridden by Reference Image."}), # MODIFICATION: Reference Mask
                 "multiplier": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 100.0, "step": 0.01, "round": 0.001, "tooltip": "Multiplies original dimensions by this factor (Scale Mode: ratio)"}),
                 "megapixels": ("FLOAT", {"default": 2.0, "min": 0.01, "max": 100.0, "step": 0.01, "round": 0.001, "tooltip": "Sets target total pixels in megapixels (Scale Mode: megapixels/megapixels_with_ar)"}),
                 "target_width": ("INT", {"default": 512, "min": 8, "max": 8192, "step": 1, "tooltip": "Target width in pixels (Scale Mode: target_width/both_dimensions)"}),
@@ -394,10 +396,13 @@ class EsesImageResize:
                 "divisible_by": ("INT", {"default": 8, "min": 0, "max": 64, "step": 1, "tooltip": "Rounds final dimensions to be divisible by this number. Set to 0 to disable."}),
             }
         }
+    
 
     # Main function where the node's logic resides
+    # Main function where the node's logic resides
     def resize_image_advanced(self, image, scale_mode, interpolation_method,
-                              mask=None, multiplier=1.0, megapixels=2.0,
+                              mask=None, ref_image=None, ref_mask=None, # MODIFICATION: Added ref_image and ref_mask
+                              multiplier=1.0, megapixels=2.0,
                               target_width=512, target_height=512,
                               ar_width=16, ar_height=9, 
                               keep_aspect_ratio=True, crop_to_fit=False, fit_to_frame=False, 
@@ -417,6 +422,35 @@ class EsesImageResize:
             if pil_mask.size != (original_width, original_height):
                 print(f"Warning: Input mask dimensions {pil_mask.size} do not match image dimensions {pil_image.size}. Resizing mask to image size using NEAREST resampling.")
                 pil_mask = pil_mask.resize((original_width, original_height), Image.Resampling.NEAREST)
+
+        
+        # ==================================================================
+        
+        # Check for Reference Image/Mask ---
+        # check for reference inputs and overrides 
+        # target dimensions if they exist.
+        ref_width, ref_height = None, None
+        
+        # Prioritize ref_image over ref_mask if both are connected
+        if ref_image is not None:
+            # Image tensor shape is B x H x W x C
+            ref_height = ref_image.shape[1]
+            ref_width = ref_image.shape[2]
+            print(f"Using Reference Image dimensions: {ref_width}x{ref_height}")
+
+        elif ref_mask is not None:
+            # Mask tensor shape is B x H x W
+            ref_height = ref_mask.shape[1]
+            ref_width = ref_mask.shape[2]
+            print(f"Using Reference Mask dimensions: {ref_width}x{ref_height}")
+
+        # If reference dimensions were found, 
+        # override the target_width and target_height
+        if ref_width is not None and ref_height is not None:
+            target_width = ref_width
+            target_height = ref_height
+        # ==================================================================
+
 
         # 2. Determine the PIL resampling 
         # filter based on user input

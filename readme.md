@@ -99,6 +99,8 @@ Eses Nodes/Image
 
 ## Update History
 
+* **2025.7.2** Version 1.1.0 added reference image and mask for getting target width / height from an image
+
 * **2025.7.1** Version 1.0.2 code cleanup
 
 * **2025.7.1** Version 1.0.1 minor cleanup
