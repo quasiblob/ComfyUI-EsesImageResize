@@ -64,7 +64,7 @@
 #   including final dimensions, megapixels, aspect ratio, and framing
 #   strategy.
 #
-# Version: 1.1.0
+# Version: 1.2.0
 # License: See LICENSE.txt
 #
 # ==========================================================================
@@ -73,8 +73,90 @@ import torch
 from PIL import Image, ImageFilter
 import numpy as np
 import math
+import comfy.utils # type: ignore
+from comfy import model_management # type: ignore
+
+
 
 # --- Helper Functions ---
+
+# This function uses comfy's 
+# internal features and is very
+# similar to nodes_upscale_model.py
+# it basically calls tiled_scale, with 
+# the same boilerplate setup and runs 
+# if it has memory. It tries drop to 
+# smaller tile size, if out of memory 
+# is encountered
+def _apply_model_upscaling(image_tensor, upscale_model):
+    """Applies the upscale model to the image tensor using tiled, auto-retrying processing."""
+    if upscale_model is None:
+        return image_tensor
+
+    device = model_management.get_torch_device()
+
+    # Pre-allocate memory on the target device
+    memory_required = model_management.module_size(upscale_model.model) + image_tensor.nelement() * image_tensor.element_size()
+    model_management.free_memory(memory_required, device)
+    upscale_model.to(device)
+    
+    # Convert image from ComfyUI's [B, H, W, C] 
+    # to PyTorch's [B, C, H, W]
+    pytorch_image = image_tensor.movedim(-1, -3).to(device)
+
+    # Start with a large tile 
+    # size for efficiency.
+    tile_size = 512 
+    overlap = 32
+    
+    # Try upscaling up to 3 times, 
+    # reducing tile size on each attempt.
+    for attempt in range(3):
+        try:
+            # Calculate total steps for the progress bar.
+            total_steps = pytorch_image.shape[0] * comfy.utils.get_tiled_scale_steps(
+                pytorch_image.shape[3], 
+                pytorch_image.shape[2], 
+                tile_x=tile_size, 
+                tile_y=tile_size, 
+                overlap=overlap
+            )
+
+            progress_bar = comfy.utils.ProgressBar(total_steps)
+            
+            # Perform the tiled upscaling.
+            upscaled_tensor = comfy.utils.tiled_scale(
+                pytorch_image,
+                lambda image_tile: upscale_model(image_tile),
+                tile_x=tile_size,
+                tile_y=tile_size,
+                overlap=overlap,
+                upscale_amount=upscale_model.scale,
+                pbar=progress_bar
+            )
+            
+            # If successful, move the model to 
+            # CPU and prepare the final tensor.
+            upscale_model.to("cpu")
+            final_tensor = torch.clamp(upscaled_tensor.movedim(-3, -1), min=0.0, max=1.0)
+            return final_tensor
+
+        except model_management.OOM_EXCEPTION as oom_exception:
+            print(f"Warning: Out of memory during upscaling on attempt {attempt + 1}. Halving tile size to {tile_size // 2}.")
+            tile_size //= 2
+
+            # If tile size becomes too small, 
+            # we must raise the exception.
+            if tile_size < 128:
+                # Ensure model is moved off GPU before failing
+                upscale_model.to("cpu") 
+                raise oom_exception
+    
+    # If all attempts fail, move model to
+    # CPU and raise the last exception.
+    upscale_model.to("cpu")
+    raise RuntimeError("Failed to upscale image after multiple attempts due to OOM errors.")
+
 
 def comfy_image_to_pil(image_tensor):
     """Converts a ComfyUI image tensor to a PIL Image."""
@@ -85,6 +167,7 @@ def comfy_image_to_pil(image_tensor):
     if batch_size > 1:
         # Warning for batch size > 1 as this node processes one image at a time
         print("Warning: Input image batch size > 1. Processing only the first image in the batch.")
+
     img_np = image_tensor[0].cpu().numpy()
     img_np = np.clip(img_np * 255, 0, 255).astype(np.uint8)
     
@@ -374,11 +457,13 @@ class EsesImageResize:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "image": ("IMAGE", {"image_upload": True}), # Main image input
+                "image": ("IMAGE", {"image_upload": True}),
                 "scale_mode": (["multiplier", "megapixels", "target_width", "target_height", "both_dimensions", "megapixels_with_ar"],),
                 "interpolation_method": (["area", "bilinear", "bicubic", "lanczos", "nearest-neighbor"],),
             },
+
             "optional": {
+                "upscale_model": ("UPSCALE_MODEL",),
                 "mask": ("MASK", {"optional": True}), # Optional mask input
                 "ref_image": ("IMAGE", {"optional": True, "tooltip": "If connected, use this image's dimensions as the target width and height."}), # MODIFICATION: Reference Image
                 "ref_mask": ("MASK", {"optional": True, "tooltip": "If connected, use this mask's dimensions as the target. Overridden by Reference Image."}), # MODIFICATION: Reference Mask
@@ -401,7 +486,8 @@ class EsesImageResize:
     # Main function where the node's logic resides
     # Main function where the node's logic resides
     def resize_image_advanced(self, image, scale_mode, interpolation_method,
-                              mask=None, ref_image=None, ref_mask=None, # MODIFICATION: Added ref_image and ref_mask
+                              upscale_model=None,
+                              mask=None, ref_image=None, ref_mask=None,
                               multiplier=1.0, megapixels=2.0,
                               target_width=512, target_height=512,
                               ar_width=16, ar_height=9, 
@@ -483,6 +569,51 @@ class EsesImageResize:
         final_width, final_height = _apply_divisible_by_rounding(
             initial_target_width, initial_target_height, divisible_by
         )
+
+
+
+        # ==================================================================
+        # --- NEW: Iterative Model Upscaling Logic ---
+        # ==================================================================
+        
+        # Check if we should use the model: must be provided and target size must be larger
+        is_upscaling = final_width > original_width or final_height > original_height
+        
+        image_for_final_resize_tensor = image # Start with the original tensor
+        
+        if upscale_model is not None and is_upscaling:
+            print(f"Eses-ImageResize: Model upscaling enabled. Model scale: {upscale_model.scale}x")
+            
+            # Loop heuristic: upscale until the next step would overshoot the target
+            while True:
+                current_h, current_w = image_for_final_resize_tensor.shape[1:3]
+                next_w = current_w * upscale_model.scale
+                next_h = current_h * upscale_model.scale
+
+                # Stop if the next upscale would significantly exceed the target size.
+                if next_w > final_width and next_h > final_height:
+                    print(f"Eses-ImageResize: Stopping model upscaling at {current_w}x{current_h} to avoid overshooting target {final_width}x{final_height}.")
+                    break
+
+                # Break if the image is already larger than the target
+                if current_w >= final_width and current_h >= final_height:
+                    break
+                
+                print(f"Eses-ImageResize: Applying model upscale: {current_w}x{current_h} -> {int(next_w)}x{int(next_h)}")
+                image_for_final_resize_tensor = _apply_model_upscaling(image_for_final_resize_tensor, upscale_model)
+
+            # Convert the upscaled tensor back to a PIL image for the final step
+            pil_image = comfy_image_to_pil(image_for_final_resize_tensor)
+            print(f"Eses-ImageResize: Finished model upscaling. New source size: {pil_image.width}x{pil_image.height}")
+            # Also update the mask to match this new size if it exists
+            if mask is not None:
+                 pil_mask = pil_mask.resize(pil_image.size, Image.Resampling.NEAREST)
+
+        # ==================================================================
+        # --- Resume existing logic on the (potentially upscaled) image ---
+        # ==================================================================
+
+
 
         # 6. Perform the actual image scaling, cropping, or padding based on chosen options
         resized_image, resized_mask = _perform_scaling_and_cropping(

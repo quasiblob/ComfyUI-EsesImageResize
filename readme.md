@@ -99,6 +99,8 @@ Eses Nodes/Image
 
 ## Update History
 
+* **2025.7.3** Version 1.2.0 added experimental support for upscaling with model. If model is connected, it will be used iteratively until nearest size to target is reached. Final scaling is done with typical interpolation algorithms.
+
 * **2025.7.2** Version 1.1.0 added reference image and mask for getting target width / height from an image
 
 * **2025.7.1** Version 1.0.2 code cleanup
