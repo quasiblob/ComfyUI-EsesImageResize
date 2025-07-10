@@ -64,7 +64,8 @@
 #   including final dimensions, megapixels, aspect ratio, and framing
 #   strategy.
 #
-# Version: 1.2.0
+# Version: 1.2.1
+#
 # License: See LICENSE.txt
 #
 # ==========================================================================

@@ -25,6 +25,10 @@ The 'Eses Image Resize' node offers comprehensive image resizing capabilities wi
     * `target_width`: Resizes to a specific width, optionally maintaining aspect ratio.
     * `target_height`: Resizes to a specific height, optionally maintaining aspect ratio.
     * `both_dimensions`: Resizes to exact width and height, potentially distorting aspect ratio if `keep_aspect_ratio` is false.
+
+* **Upscale Model Scaling (NEW)**:
+    * `upscale_model`: Connect optional upscale model, and it will be used for upscaling, instead of interpolation algorithms. Note - final scaling step to target resolution is done using interpolation algorithms.
+
 * **Aspect Ratio Handling**:
     * `crop_to_fit`: Resizes and then crops the image to perfectly fill the target dimensions, preserving aspect ratio by removing excess.
     * `fit_to_frame`: Resizes and adds a letterbox/pillarbox to fit the image within the target dimensions without cropping, filling empty space with a specified color.
@@ -64,6 +68,7 @@ The 'Eses Image Resize' node offers comprehensive image resizing capabilities wi
 ComfyUI-EsesImageResize/
 ├── init.py                     # Main module defining the custom node.
 ├── image_resize.py             # The Python file containing the node logic.
+├── LICENSE.txt                 # You should read this before using this node.
 └── README.md                   # This file.
 ```
 
@@ -99,15 +104,17 @@ Eses Nodes/Image
 
 ## Update History
 
-* **2025.7.3** Version 1.2.0 added experimental support for upscaling with model. If model is connected, it will be used iteratively until nearest size to target is reached. Final scaling is done with typical interpolation algorithms.
+* **2025.7.10 Version 1.2.1** minor updates to documentation
 
-* **2025.7.2** Version 1.1.0 added reference image and mask for getting target width / height from an image
+* **2025.7.3 Version 1.2.0** added experimental support for upscaling with model. If model is connected, it will be used iteratively until nearest size to target is reached. Final scaling is done with typical interpolation algorithms.
 
-* **2025.7.1** Version 1.0.2 code cleanup
+* **2025.7.2 Version 1.1.0** added reference image and mask for getting target width / height from an image
 
-* **2025.7.1** Version 1.0.1 minor cleanup
+* **2025.7.1 Version 1.0.2** code cleanup
 
-* **2025.6.27** Version 1.0.0 released
+* **2025.7.1 Version 1.0.1** minor cleanup
+
+* **2025.6.27 Version 1.0.0** released
 
 
 ## ⚠️Disclaimer⚠️
