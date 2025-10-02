@@ -104,6 +104,8 @@ Eses Nodes/Image
 
 ## Update History
 
+* **2025.10.2 Version 1.2.4** fixed issue with target width / height scaling mode
+
 * **2025.7.10 Version 1.2.1** minor updates to documentation
 
 * **2025.7.3 Version 1.2.0** added experimental support for upscaling with model. If model is connected, it will be used iteratively until nearest size to target is reached. Final scaling is done with typical interpolation algorithms.

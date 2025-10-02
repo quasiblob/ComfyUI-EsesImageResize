@@ -60,17 +60,18 @@
 #  • `MASK`: The corresponding mask tensor, reflecting cropping or letterbox
 #   areas.
 #
-# • `INFO`: A string providing details about the resizing operation,
-#   including final dimensions, megapixels, aspect ratio, and framing
-#   strategy.
+# • `metadata`: A JSON string providing details about the resizing operation,
+#   including final dimensions, megapixels, aspect ratio, and processing
+#   parameters.
 #
-# Version: 1.2.1
+# Version: 1.2.4
 #
 # License: See LICENSE.txt
 #
 # ==========================================================================
 
 import torch
+import json
 from PIL import Image, ImageFilter
 import numpy as np
 import math
@@ -89,6 +90,7 @@ from comfy import model_management # type: ignore
 # if it has memory. It tries drop to 
 # smaller tile size, if out of memory 
 # is encountered
+
 def _apply_model_upscaling(image_tensor, upscale_model):
     """Applies the upscale model to the image tensor using tiled, auto-retrying processing."""
     if upscale_model is None:
@@ -161,12 +163,12 @@ def _apply_model_upscaling(image_tensor, upscale_model):
 
 def comfy_image_to_pil(image_tensor):
     """Converts a ComfyUI image tensor to a PIL Image."""
-    
     # image_tensor is BATCH x HEIGHT x WIDTH x CHANNEL
     batch_size, H, W, C = image_tensor.shape
     
     if batch_size > 1:
-        # Warning for batch size > 1 as this node processes one image at a time
+        # Warning for batch size > 1 as this 
+        # node processes one image at a time
         print("Warning: Input image batch size > 1. Processing only the first image in the batch.")
 
     img_np = image_tensor[0].cpu().numpy()
@@ -190,7 +192,8 @@ def comfy_mask_to_pil(mask_tensor):
     batch_size, H, W = mask_tensor.shape
     
     if batch_size > 1:
-        # Warning for batch size > 1 as this node processes one mask at a time
+        # Warning for batch size > 1 as this 
+        # node processes one mask at a time
         print("Warning: Input mask batch size > 1. Processing only the first mask in the batch.")
     
     mask_np = mask_tensor[0].cpu().numpy()
@@ -274,9 +277,9 @@ def _calculate_initial_target_dimensions(original_width, original_height, scale_
         
     elif scale_mode == "megapixels_with_ar":
         target_pixels = megapixels * 1_000_000
+        
         # Handle zero aspect ratio components to prevent division by zero
         target_ar = ar_width / ar_height if ar_height != 0 else (ar_width if ar_width != 0 else 1.0)
-        
         new_height = round(np.sqrt(target_pixels / target_ar))
         new_width = round(new_height * target_ar)
     
@@ -309,138 +312,85 @@ def _perform_scaling_and_cropping(pil_image, pil_mask, final_width, final_height
     original_width, original_height = pil_image.size
     original_aspect_ratio = original_width / original_height if original_height != 0 else 1.0
     
-    # Modes where special framing logic (crop_to_fit, fit_to_frame) 
-    # can apply to define a canvas.
-    # megapixels_with_ar is now included here, 
-    # allowing both crop_to_fit and fit_to_frame for it.
     apply_canvas_framing_logic = scale_mode in ["target_width", "target_height", "both_dimensions", "megapixels_with_ar"]
 
     resized_image = None
     resized_mask = None
 
-    # Priority: Crop to Fit > Fit to Frame > Default Scaling
     if crop_to_fit and apply_canvas_framing_logic:
         
         # --- Crop to Fit (Fill) Logic ---
-        
-        # Scales the image to completely fill the 
-        # target dimensions, then crops any excess.
         target_aspect_ratio = final_width / final_height if final_height != 0 else (final_width if final_width != 0 else 1.0)
 
         scale_factor = 1.0
         if original_aspect_ratio > target_aspect_ratio:
-            # Original is wider than target: scale by 
-            # height to fill, then crop width
             scale_factor = final_height / original_height
         else:
-            # Original is taller or same AR as target: 
-            # scale by width to fill, then crop height
             scale_factor = final_width / original_width
         
-        intermediate_width = int(original_width * scale_factor)
-        intermediate_height = int(original_height * scale_factor)
+        intermediate_width = int(round(original_width * scale_factor))
+        intermediate_height = int(round(original_height * scale_factor))
 
-        # Ensure intermediate dimensions are at least 1 pixel
         intermediate_width = max(1, intermediate_width)
         intermediate_height = max(1, intermediate_height)
 
-        # 1. Scale the image to fill the target 
-        # dimensions while preserving its original AR
         scaled_img_for_crop = pil_image.resize((intermediate_width, intermediate_height), resample=resample_filter)
         scaled_mask_for_crop = None
-        
         if pil_mask is not None:
             scaled_mask_for_crop = pil_mask.resize((intermediate_width, intermediate_height), resample=Image.Resampling.NEAREST)
 
-        # 2. Calculate crop box for a center crop
-        left = (intermediate_width - final_width) / 2
-        top = (intermediate_height - final_height) / 2
-        right = (intermediate_width + final_width) / 2
-        bottom = (intermediate_height + final_height) / 2
-        
-        crop_box = (math.floor(left), math.floor(top), math.ceil(right), math.ceil(bottom))
+        # prevents the off-by-one pixel error.
+        left = round((intermediate_width - final_width) / 2)
+        top = round((intermediate_height - final_height) / 2)
+        crop_box = (left, top, left + final_width, top + final_height)
 
-        # 3. Perform the crop
         resized_image = scaled_img_for_crop.crop(crop_box)
-        
         if scaled_mask_for_crop is not None:
             resized_mask = scaled_mask_for_crop.crop(crop_box)
 
-    # fit_to_frame now works with 
-    # megapixels_with_ar as well
     elif fit_to_frame and apply_canvas_framing_logic:
         
         # --- Fit to Frame (Contain/Letterbox) Logic ---
-        
-        # Scales the image to fit entirely within 
-        # the target dimensions, then pads with bars.
         target_aspect_ratio = final_width / final_height if final_height != 0 else (final_width if final_width != 0 else 1.0)
         scale_factor = 1.0
         
         if original_aspect_ratio > target_aspect_ratio:
-            
-            # Original is wider than target: scale by 
-            # width to fit, height will be smaller
             scale_factor = final_width / original_width
         else:
-            # Original is taller or same AR as target: 
-            # scale by height to fit, width will be smaller
             scale_factor = final_height / original_height
 
-        scaled_width = int(original_width * scale_factor)
-        scaled_height = int(original_height * scale_factor)
+        scaled_width = int(round(original_width * scale_factor))
+        scaled_height = int(round(original_height * scale_factor))
 
-
-        # Ensure scaled dimensions are at least 1 pixel
         scaled_width = max(1, scaled_width)
         scaled_height = max(1, scaled_height)
 
-        # 1. Create a new background canvas of the 
-        # final target size with the specified color
         resized_image = Image.new('RGB', (final_width, final_height), letterbox_fill_color_rgb)
-        
-        # Determine mask padding color 
-        # (0 for black, 255 for white)
         mask_padding_color = 255 if letterbox_mask_is_white else 0
-        
         if pil_mask is not None:
             resized_mask = Image.new('L', (final_width, final_height), mask_padding_color) 
 
-        # 2. Resize the original image/mask 
-        # to fit within the target frame
         scaled_original_image = pil_image.resize((scaled_width, scaled_height), resample=resample_filter)
         scaled_original_mask = None
-        
         if pil_mask is not None:
             scaled_original_mask = pil_mask.resize((scaled_width, scaled_height), resample=Image.Resampling.NEAREST)
 
-        # 3. Calculate paste position to center 
-        # the scaled image/mask on the new canvas
         paste_x = (final_width - scaled_width) // 2
         paste_y = (final_height - scaled_height) // 2
 
-        # 4. Paste the scaled image/mask onto the new canvas
         resized_image.paste(scaled_original_image, (paste_x, paste_y))
-        
         if pil_mask is not None:
             resized_mask.paste(scaled_original_mask, (paste_x, paste_y))
 
     else:
-        
         # --- Default Scaling Logic ---
-        # Resizes directly to final_width/height. 
-        # Aspect ratio is preserved if 'keep_aspect_ratio' is True
-        # in the dimension calculation step; otherwise, 
-        # distortion may occur.
         resized_image = pil_image.resize((final_width, final_height), resample=resample_filter)
-        
         if pil_mask is not None:
             resized_mask = pil_mask.resize((final_width, final_height), resample=Image.Resampling.NEAREST)
         else:
-            resized_mask = None # No mask to resize
+            resized_mask = None
 
     return resized_image, resized_mask
-
 
 
 # --- Eses Image Resize Node Class ---
@@ -452,7 +402,7 @@ class EsesImageResize:
     CATEGORY = "Eses Nodes/Image"
     FUNCTION = "resize_image_advanced"
     RETURN_TYPES = ("IMAGE", "MASK", "INT", "INT", "STRING",)
-    RETURN_NAMES = ("IMAGE", "MASK", "width", "height", "info",)
+    RETURN_NAMES = ("IMAGE", "MASK", "width", "height", "metadata",)
 
     @classmethod
     def INPUT_TYPES(s):
@@ -484,7 +434,6 @@ class EsesImageResize:
         }
     
 
-    # Main function where the node's logic resides
     # Main function where the node's logic resides
     def resize_image_advanced(self, image, scale_mode, interpolation_method,
                               upscale_model=None,
@@ -559,39 +508,57 @@ class EsesImageResize:
         letterbox_fill_color_rgb = parsed_letterbox_color_rgba[:3] # Extract RGB components for Image.new()
 
 
-        # 4. Calculate the initial target dimensions based on the chosen scaling mode
+        # 4. Calculate initial dimensions for all modes first
         initial_target_width, initial_target_height = _calculate_initial_target_dimensions(
             original_width, original_height, scale_mode,
             multiplier, megapixels, target_width, target_height,
             ar_width, ar_height, keep_aspect_ratio
         )
+        
+        original_aspect_ratio = original_width / original_height if original_height != 0 else 1.0
+        
+        if scale_mode == "target_width" and keep_aspect_ratio:
+            # 1. Round the primary dimension (width) first.
+            w = _apply_divisible_by_rounding(initial_target_width, 0, divisible_by)[0]
+            h = round(w / original_aspect_ratio)
+            final_width, final_height = _apply_divisible_by_rounding(w, h, divisible_by)
 
-        # 5. Apply divisibility rounding to the target dimensions
-        final_width, final_height = _apply_divisible_by_rounding(
-            initial_target_width, initial_target_height, divisible_by
-        )
+        elif scale_mode == "target_height" and keep_aspect_ratio:
+            # 1. Round the primary dimension (height) first.
+            h = _apply_divisible_by_rounding(0, initial_target_height, divisible_by)[1]
+            w = round(h * original_aspect_ratio)
+            final_width, final_height = _apply_divisible_by_rounding(w, h, divisible_by)
+        
+        else:
+            final_width, final_height = _apply_divisible_by_rounding(
+                initial_target_width, initial_target_height, divisible_by
+            )
 
 
 
         # ==================================================================
-        # --- NEW: Iterative Model Upscaling Logic ---
+        # --- Iterative Model Upscaling Logic ---
         # ==================================================================
         
         # Check if we should use the model: must be provided and target size must be larger
         is_upscaling = final_width > original_width or final_height > original_height
+        model_upscaling_used = False
         
         image_for_final_resize_tensor = image # Start with the original tensor
         
         if upscale_model is not None and is_upscaling:
             print(f"Eses-ImageResize: Model upscaling enabled. Model scale: {upscale_model.scale}x")
+            model_upscaling_used = True
             
-            # Loop heuristic: upscale until the next step would overshoot the target
+            # Loop heuristic: upscale until the next 
+            # step would overshoot the target
             while True:
                 current_h, current_w = image_for_final_resize_tensor.shape[1:3]
                 next_w = current_w * upscale_model.scale
                 next_h = current_h * upscale_model.scale
 
-                # Stop if the next upscale would significantly exceed the target size.
+                # Stop if the next upscale would 
+                # significantly exceed the target size.
                 if next_w > final_width and next_h > final_height:
                     print(f"Eses-ImageResize: Stopping model upscaling at {current_w}x{current_h} to avoid overshooting target {final_width}x{final_height}.")
                     break
@@ -603,18 +570,19 @@ class EsesImageResize:
                 print(f"Eses-ImageResize: Applying model upscale: {current_w}x{current_h} -> {int(next_w)}x{int(next_h)}")
                 image_for_final_resize_tensor = _apply_model_upscaling(image_for_final_resize_tensor, upscale_model)
 
-            # Convert the upscaled tensor back to a PIL image for the final step
+            # Convert the upscaled tensor back 
+            # to a PIL image for the final step
             pil_image = comfy_image_to_pil(image_for_final_resize_tensor)
             print(f"Eses-ImageResize: Finished model upscaling. New source size: {pil_image.width}x{pil_image.height}")
+            
             # Also update the mask to match this new size if it exists
             if mask is not None:
                  pil_mask = pil_mask.resize(pil_image.size, Image.Resampling.NEAREST)
 
+
         # ==================================================================
         # --- Resume existing logic on the (potentially upscaled) image ---
         # ==================================================================
-
-
 
         # 6. Perform the actual image scaling, cropping, or padding based on chosen options
         resized_image, resized_mask = _perform_scaling_and_cropping(
@@ -629,26 +597,46 @@ class EsesImageResize:
         # default black mask of the new dimensions
         output_mask_tensor = pil_to_comfy_mask(resized_mask) if resized_mask else torch.zeros([1, final_height, final_width], dtype=torch.float32)
 
-
-        # 8. Generate an informational string 
-        # about the resizing operation
+        # 8. Generate JSON metadata
         final_megapixels = (final_width * final_height) / 1_000_000.0
         final_aspect_ratio = final_width / final_height if final_height != 0 else float('inf')
-        info_text = f"Resized: {final_width}x{final_height} | {final_megapixels:.2f} MP | AR: {final_aspect_ratio:.2f}"
-
-        if scale_mode == "megapixels_with_ar":
-             info_text += f" (Target AR: {ar_width}:{ar_height})"
         
-        # Add details about the specific 
-        # framing strategy used
-        if crop_to_fit and scale_mode not in ["multiplier", "megapixels"]:
-            info_text += " (Cropped to Fit)"
-        elif fit_to_frame and scale_mode not in ["multiplier", "megapixels", "megapixels_with_ar"]:
-            mask_color_info = "White" if letterbox_mask_is_white else "Black"
-            info_text += f" (Fit to Frame - Color: {letterbox_color}, Mask: {mask_color_info})"
-
+        # Determine framing method used
+        framing_method = "Default Scaling"
+        if crop_to_fit and scale_mode in ["target_width", "target_height", "both_dimensions", "megapixels_with_ar"]:
+            framing_method = "Crop to Fit"
+        elif fit_to_frame and scale_mode in ["target_width", "target_height", "both_dimensions", "megapixels_with_ar"]:
+            framing_method = "Fit to Frame"
+        
+        metadata = {
+            "width": final_width,
+            "height": final_height,
+            "size": f"{final_width},{final_height}",
+            "megapixels": round(final_megapixels, 2),
+            "aspect_ratio": round(final_aspect_ratio, 2),
+            "scale_mode": scale_mode,
+            "interpolation_method": interpolation_method,
+            "upscale_model_used": model_upscaling_used,
+            "multiplier": multiplier,
+            "megapixels_target": megapixels,
+            "target_width": target_width,
+            "target_height": target_height,
+            "ar_width": ar_width,
+            "ar_height": ar_height,
+            "keep_aspect_ratio": keep_aspect_ratio,
+            "crop_to_fit": crop_to_fit,
+            "fit_to_frame": fit_to_frame,
+            "letterbox_color": letterbox_color,
+            "parsed_letterbox_color": parsed_letterbox_color_rgba,
+            "letterbox_mask_is_white": letterbox_mask_is_white,
+            "divisible_by": divisible_by,
+            "framing_method": framing_method,
+            "status": "Success"
+        }
+        
+        metadata_json = json.dumps(metadata, indent=2)
 
         # 9. Return the processed image, mask, 
-        # dimensions, and info string
-        return (output_image_tensor, output_mask_tensor, final_width, final_height, info_text,)
+        # dimensions, and metadata JSON
+        return (output_image_tensor, output_mask_tensor, final_width, final_height, metadata_json,)
     
