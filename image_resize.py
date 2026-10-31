@@ -445,6 +445,25 @@ class EsesImageResize:
                               letterbox_color="0,0,0", letterbox_mask_is_white=False, 
                               divisible_by=8):
 
+        # Batches (e.g. video frames) are resized frame by frame
+        if image.shape[0] > 1:
+            frame_outputs = []
+            for i in range(image.shape[0]):
+                frame_mask = mask[i:i + 1] if (mask is not None and mask.shape[0] > 1) else mask
+                frame_outputs.append(self.resize_image_advanced(
+                    image[i:i + 1], scale_mode, interpolation_method,
+                    upscale_model=upscale_model,
+                    mask=frame_mask, ref_image=ref_image, ref_mask=ref_mask,
+                    multiplier=multiplier, megapixels=megapixels,
+                    target_width=target_width, target_height=target_height,
+                    ar_width=ar_width, ar_height=ar_height,
+                    keep_aspect_ratio=keep_aspect_ratio, crop_to_fit=crop_to_fit, fit_to_frame=fit_to_frame,
+                    letterbox_color=letterbox_color, letterbox_mask_is_white=letterbox_mask_is_white,
+                    divisible_by=divisible_by))
+            return (torch.cat([o[0] for o in frame_outputs], dim=0),
+                    torch.cat([o[1] for o in frame_outputs], dim=0),
+                    frame_outputs[0][2], frame_outputs[0][3], frame_outputs[0][4])
+
         # 1. Convert ComfyUI tensors to PIL Images for processing
         pil_image = comfy_image_to_pil(image)
         original_width, original_height = pil_image.size
