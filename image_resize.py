@@ -14,6 +14,10 @@
 #
 # Key Features:
 #
+# • Image Batches / Video Frames:
+#   • Supports still images and video frame batches, preserving frame order.
+#   • Accepts no mask, one shared mask, or one corresponding mask per frame.
+#
 # • Multiple Scaling Modes:
 #   • `ratio`: Resizes by a simple multiplication factor.
 #   • `megapixels`: Scales the image to a target megapixel count.
@@ -64,7 +68,7 @@
 #   including final dimensions, megapixels, aspect ratio, and processing
 #   parameters.
 #
-# Version: 1.2.4
+# Version: 1.3.0
 #
 # License: See LICENSE.txt
 #
@@ -444,6 +448,49 @@ class EsesImageResize:
                               keep_aspect_ratio=True, crop_to_fit=False, fit_to_frame=False, 
                               letterbox_color="0,0,0", letterbox_mask_is_white=False, 
                               divisible_by=8):
+
+        batch_size = image.shape[0]
+        if batch_size < 1:
+            raise ValueError("Eses Image Resize requires at least one input image.")
+
+        if mask is not None and mask.shape[0] not in (1, batch_size):
+            raise ValueError(
+                f"Eses Image Resize received {batch_size} images and {mask.shape[0]} masks; "
+                "provide one mask or one mask per image."
+            )
+
+        if batch_size > 1:
+            # ComfyUI video frames arrive as an IMAGE batch. Process each frame
+            # independently so its corresponding mask stays paired with it.
+            frame_outputs = []
+            for index in range(batch_size):
+                frame_mask = None
+                if mask is not None:
+                    mask_index = 0 if mask.shape[0] == 1 else index
+                    frame_mask = mask[mask_index:mask_index + 1]
+
+                frame_outputs.append(self.resize_image_advanced(
+                    image[index:index + 1], scale_mode, interpolation_method,
+                    upscale_model=upscale_model, mask=frame_mask,
+                    ref_image=ref_image, ref_mask=ref_mask,
+                    multiplier=multiplier, megapixels=megapixels,
+                    target_width=target_width, target_height=target_height,
+                    ar_width=ar_width, ar_height=ar_height,
+                    keep_aspect_ratio=keep_aspect_ratio,
+                    crop_to_fit=crop_to_fit, fit_to_frame=fit_to_frame,
+                    letterbox_color=letterbox_color,
+                    letterbox_mask_is_white=letterbox_mask_is_white,
+                    divisible_by=divisible_by,
+                ))
+
+            metadata = json.loads(frame_outputs[0][4])
+            metadata["batch_size"] = batch_size
+            return (
+                torch.cat([output[0] for output in frame_outputs], dim=0),
+                torch.cat([output[1] for output in frame_outputs], dim=0),
+                frame_outputs[0][2], frame_outputs[0][3],
+                json.dumps(metadata, indent=2),
+            )
 
         # 1. Convert ComfyUI tensors to PIL Images for processing
         pil_image = comfy_image_to_pil(image)

@@ -13,6 +13,8 @@
 
 The 'Eses Image Resize' node offers comprehensive image resizing capabilities within ComfyUI. It supports various scaling modes including scaling by a specific ratio, target megapixels, or directly to fixed dimensions. The node provides framing options to handle aspect ratio changes, allowing users to 'Crop to Fit' (fill) the target frame or 'Fit to Frame' (letterbox) the image with a customizable fill color. It also generates and outputs a corresponding mask, with control over the letterbox area's color (black or white) within the mask.
 
+Supports still images and image batches, including video frames extracted by ComfyUI video nodes.
+
 💡If you are looking for a single node that does pretty much *all the possible scaling related tasks*, with minimal dependencies, then why not give this one a try! 
 
 
@@ -37,6 +39,10 @@ The 'Eses Image Resize' node offers comprehensive image resizing capabilities wi
 * **Mask Output Control**:
     * Automatically generates a mask corresponding to the resized image.
     * `letterbox_mask_is_white`: Determines if the letterbox areas in the output mask should be white (active) or black (inactive).
+* **Image Batch / Video Frame Support**:
+    * Resizes still images or every frame in an image batch, preserving frame count and order.
+    * Works without a mask, with one mask shared across all frames, or with one mask per frame. Other mask counts produce an error.
+    * Video loading, frame rate, audio, and encoding are handled by the surrounding ComfyUI nodes.
 * **Dimension Rounding**:
     * `divisible_by`: Allows rounding of final dimensions to be divisible by a specified number (e.g., 8, 64), which can be useful for certain models.
 
@@ -66,20 +72,22 @@ The 'Eses Image Resize' node offers comprehensive image resizing capabilities wi
 
 ```
 ComfyUI-EsesImageResize/
-├── init.py                     # Main module defining the custom node.
+├── __init__.py                 # Registers the custom node.
 ├── image_resize.py             # The Python file containing the node logic.
 ├── LICENSE.txt                 # You should read this before using this node.
-└── README.md                   # This file.
+└── readme.md                   # This file.
 ```
 
 
 ## Usage
 
 * Connect an image to the `image` input. Optionally, connect a mask to the `mask` input if you wish for it to be resized alongside the image.
+* Video loader frames passed as an image batch are resized frame by frame. The output remains a batch with the same frame count and order. A single connected mask is shared by all frames; a mask batch must have the same frame count as the image batch.
+* For a video workflow, connect `Load Video` → `Get Video Components` → `Eses Image Resize` → `Create Video` → `Save Video`, using the image/frame connections through the resize node. Connect `fps` from `Get Video Components` to `Create Video` to preserve playback speed, and connect `audio` there too if needed.
 * Select your desired `scale_mode` and adjust the related parameters (e.g., `multiplier`, `megapixels`, `target_width`, `target_height`, `ar_width`, `ar_height`).
 * Choose how the image should handle aspect ratio changes using `crop_to_fit` or `fit_to_frame`.
 * Customize the `letterbox_color` and `letterbox_mask_is_white` settings if using `fit_to_frame`.
-* The node will output the resized `IMAGE`, a corresponding `MASK`, the final `width` and `height`, and an `info` string detailing the operation.
+* The node will output the resized `IMAGE`, a corresponding `MASK`, the final `width` and `height`, and a JSON `metadata` string detailing the operation. For batches of multiple frames, metadata also includes `batch_size`.
 
 
 ## Category
@@ -103,6 +111,8 @@ Eses Nodes/Image
 
 
 ## Update History
+
+* **2026.11.1 Version 1.3.0** added image batch / video frame resizing with shared or per-frame masks.
 
 * **2025.10.2 Version 1.2.4** fixed issue with target width / height scaling mode
 
